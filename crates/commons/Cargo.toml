@@ -1,0 +1,10 @@
+[package]
+name = "commons"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lazy_static = "1.5.0"
+rand = "0.9.0-alpha.2"
+cranelift-codegen = {path="../../wasmtime/cranelift/codegen", features = ["enable-serde", "pub_fields"] }
+serde = { version = "1.0.207", features = ["derive"] }

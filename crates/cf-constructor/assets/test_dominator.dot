@@ -1,0 +1,73 @@
+digraph "u0:0" {
+    {rank=min; block0}
+    block0 [shape=record, label="{block0:
+ | <inst2>jump block2
+}"]
+    block1 [shape=record, label="{block1:
+}"]
+    block2 [shape=record, label="{block2(v0: i32):
+ | <inst17>brif v0, block12, block4
+}"]
+    block4 [shape=record, label="{block4:
+ | <inst3>jump block1
+}"]
+    block8 [shape=record, label="{block8:
+ | <inst5>jump block7
+}"]
+    block9 [shape=record, label="{block9:
+ | <inst6>jump block7
+}"]
+    block10 [shape=record, label="{block10:
+ | <inst7>jump block7
+}"]
+    block11 [shape=record, label="{block11:
+ | <inst8>jump block7
+}"]
+    block6 [shape=record, label="{block6:
+ | <inst9>jump block7
+}"]
+    block7 [shape=record, label="{block7:
+ | <inst11>jump block2
+}"]
+    block12 [shape=record, label="{block12(v2: i32):
+ | <inst12>br_table v2, block13, [block15, block16, block17]
+}"]
+    block15 [shape=record, label="{block15:
+ | <inst13>jump block14
+}"]
+    block16 [shape=record, label="{block16:
+ | <inst14>jump block14
+}"]
+    block17 [shape=record, label="{block17:
+ | <inst15>jump block14
+}"]
+    block13 [shape=record, label="{block13:
+ | <inst16>jump block14
+}"]
+    block14 [shape=record, label="{block14:
+ | <inst18>br_table v1, block6, [block8, block9, block10, block11]
+}"]
+    block4:inst3 -> block1
+    block0:inst2 -> block2
+    block7:inst11 -> block2
+    block2:inst17 -> block4
+    block14:inst18 -> block8
+    block14:inst18 -> block9
+    block14:inst18 -> block10
+    block14:inst18 -> block11
+    block14:inst18 -> block6
+    block8:inst5 -> block7
+    block9:inst6 -> block7
+    block10:inst7 -> block7
+    block11:inst8 -> block7
+    block6:inst9 -> block7
+    block2:inst17 -> block12
+    block12:inst12 -> block15
+    block12:inst12 -> block16
+    block12:inst12 -> block17
+    block12:inst12 -> block13
+    block15:inst13 -> block14
+    block16:inst14 -> block14
+    block17:inst15 -> block14
+    block13:inst16 -> block14
+}

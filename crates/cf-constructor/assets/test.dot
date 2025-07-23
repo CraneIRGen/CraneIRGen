@@ -1,0 +1,150 @@
+digraph "u0:0" {
+    {rank=min; block0}
+    block0 [shape=record, label="{block0:
+ | <inst13>jump block9
+}"]
+    block1 [shape=record, label="{block1:
+}"]
+    block5 [shape=record, label="{block5:
+ | <inst1>jump block4
+}"]
+    block6 [shape=record, label="{block6:
+ | <inst2>jump block4
+}"]
+    block7 [shape=record, label="{block7:
+ | <inst3>jump block4
+}"]
+    block8 [shape=record, label="{block8:
+ | <inst4>jump block4
+}"]
+    block3 [shape=record, label="{block3:
+ | <inst5>jump block4
+}"]
+    block4 [shape=record, label="{block4:
+ | <inst7>jump block1
+}"]
+    block9 [shape=record, label="{block9(v1: i32):
+ | <inst8>br_table v1, block10, [block15, block13, block14]
+}"]
+    block13 [shape=record, label="{block13:
+ | <inst10>jump block11
+}"]
+    block14 [shape=record, label="{block14:
+ | <inst11>jump block11
+}"]
+    block10 [shape=record, label="{block10:
+ | <inst12>jump block11
+}"]
+    block11 [shape=record, label="{block11:
+ | <inst14>br_table v0, block3, [block5, block6, block7, block8]
+}"]
+    block15 [shape=record, label="{block15(v2: i32):
+ | <inst20>brif v2, block18, block17
+}"]
+    block17 [shape=record, label="{block17:
+ | <inst17>jump block11
+}"]
+    block18 [shape=record, label="{block18(v3: i32):
+ | <inst24>brif v3, block19, block21
+}"]
+    block19 [shape=record, label="{block19:
+ | <inst19>jump block18
+}"]
+    block21 [shape=record, label="{block21(v4: i32):
+ | <inst29>brif v4, block22, block24
+}"]
+    block22 [shape=record, label="{block22:
+ | <inst23>jump block21
+}"]
+    block24 [shape=record, label="{block24(v5: i32):
+ | <inst33>brif v5, block28, block26
+}"]
+    block26 [shape=record, label="{block26:
+ | <inst28>jump block27
+}"]
+    block27 [shape=record, label="{block27:
+ | <inst30>jump block15
+}"]
+    block28 [shape=record, label="{block28(v6: i32):
+ | <inst45>brif v6, block29, block38
+}"]
+    block29 [shape=record, label="{block29:
+ | <inst32>jump block28
+}"]
+    block34 [shape=record, label="{block34:
+ | <inst36>jump block33
+}"]
+    block35 [shape=record, label="{block35:
+ | <inst37>jump block33
+}"]
+    block36 [shape=record, label="{block36:
+ | <inst38>jump block33
+}"]
+    block37 [shape=record, label="{block37:
+ | <inst39>jump block33
+}"]
+    block32 [shape=record, label="{block32:
+ | <inst40>jump block33
+}"]
+    block33 [shape=record, label="{block33:
+ | <inst42>jump block27
+}"]
+    block38 [shape=record, label="{block38(v8: i32):
+ | <inst43>brif v8, block39, block40
+}"]
+    block39 [shape=record, label="{block39:
+ | <inst44>jump block38
+}"]
+    block40 [shape=record, label="{block40:
+ | <inst46>br_table v7, block32, [block34, block35, block36, block37]
+}"]
+    block4:inst7 -> block1
+    block11:inst14 -> block5
+    block11:inst14 -> block6
+    block11:inst14 -> block7
+    block11:inst14 -> block8
+    block11:inst14 -> block3
+    block5:inst1 -> block4
+    block6:inst2 -> block4
+    block7:inst3 -> block4
+    block8:inst4 -> block4
+    block3:inst5 -> block4
+    block0:inst13 -> block9
+    block9:inst8 -> block13
+    block9:inst8 -> block14
+    block9:inst8 -> block10
+    block13:inst10 -> block11
+    block14:inst11 -> block11
+    block10:inst12 -> block11
+    block17:inst17 -> block11
+    block9:inst8 -> block15
+    block27:inst30 -> block15
+    block15:inst20 -> block17
+    block19:inst19 -> block18
+    block15:inst20 -> block18
+    block18:inst24 -> block19
+    block22:inst23 -> block21
+    block18:inst24 -> block21
+    block21:inst29 -> block22
+    block21:inst29 -> block24
+    block24:inst33 -> block26
+    block26:inst28 -> block27
+    block33:inst42 -> block27
+    block29:inst32 -> block28
+    block24:inst33 -> block28
+    block28:inst45 -> block29
+    block40:inst46 -> block34
+    block40:inst46 -> block35
+    block40:inst46 -> block36
+    block40:inst46 -> block37
+    block40:inst46 -> block32
+    block34:inst36 -> block33
+    block35:inst37 -> block33
+    block36:inst38 -> block33
+    block37:inst39 -> block33
+    block32:inst40 -> block33
+    block39:inst44 -> block38
+    block28:inst45 -> block38
+    block38:inst43 -> block39
+    block38:inst43 -> block40
+}
