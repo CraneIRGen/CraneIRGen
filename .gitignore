@@ -5,8 +5,6 @@
 /crates/commons/target/
 /crates/function-generator/target/
 /crates/cg-constructor/target/
-/cases/
-/cases_test/
-/newcases/
-/newcases_test/
-cranelift.ir.json
+/output/
+/.vscode/
+compass-connections.json

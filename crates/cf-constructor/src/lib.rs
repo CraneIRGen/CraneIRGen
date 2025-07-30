@@ -17,6 +17,10 @@ use std::io::Write;
 
 const MAX_DEPTH: usize = 2;
 
+pub fn add(left: u64, right: u64) -> u64 {
+    left + right
+}
+
 #[cfg(test)]
 mod tests {
     use cranelift_codegen::cfg_printer::CFGPrinter;
@@ -27,6 +31,12 @@ mod tests {
     use std::io::Write;
 
     use super::*;
+
+    #[test]
+    fn it_works() {
+        let result = add(2, 2);
+        assert_eq!(result, 4);
+    }
 
     #[test]
     fn sequential_test() {
@@ -514,7 +524,7 @@ fn switch_blocks(func: &mut Function, case_num: usize) -> Switch {
                     }
                     _ => panic!("block is not a BlockType::Block"),
                 },
-                None => panic!("Insert case block failed"),
+                None => panic!("插入case_block失败"),
             }
         }
         cur.insert_block(default_block);
@@ -853,7 +863,7 @@ fn update_predecessor(func: &mut Function, block: Block, replaced_block: Block) 
                 } else if false_block == replaced_block {
                     cur.ins().brif(arg, true_block, &[], block, &[]);
                 } else {
-                    panic!("The replaced block is not present in the jump target of the br_if of the previous block")
+                    panic!("被替换块不存在于前块的br_if的跳转目标中")
                 }
             }
             InstructionData::BranchTable { opcode, arg, table } => {
@@ -877,7 +887,7 @@ fn update_predecessor(func: &mut Function, block: Block, replaced_block: Block) 
                 cur.ins().jump(block, &[]);
             }
             _ => {
-                panic!("There is an error in the control instruction identification of the previous block")
+                panic!("前一个块的控制指令识别有错误")
             }
         }
     }
@@ -938,7 +948,7 @@ fn update_successor(func: &mut Function, block: Block, replaced_block: Block) {
                 }
             }
         } else {
-            panic!("The replaced block has no jump instruction")
+            panic!("被替换的块没有跳转指令")
         }
     } else if post_blocks.len() >= 3 {
         let mut block_call_list: Vec<BlockCall> = vec![];
@@ -967,7 +977,7 @@ fn update_successor(func: &mut Function, block: Block, replaced_block: Block) {
                 }
             }
         } else {
-            panic!("The replaced block has no jump instruction")
+            panic!("被替换的块没有跳转指令")
         }
     }
 

@@ -101,7 +101,6 @@ pub fn generate_function_call_graph() -> FunctionNode {
     let mut func_id = 0;
     generate_function_tree(&mut root, max_depth, 0, &mut func_id);
 
-    root.print(0);
     return root;
 }
 

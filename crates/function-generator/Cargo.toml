@@ -22,7 +22,7 @@ bytemuck = "1.23.1"
 
 
 [features]
-default = ["riscv"]
+default = ["riscv"]  
 
 
 x86-64 = []

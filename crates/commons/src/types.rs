@@ -2,15 +2,18 @@ use crate::types::ir::Type;
 use cranelift_codegen::ir;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fs;
+use toml;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Hash, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResultType {
     Same,
     Conditional,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Hash, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OperandType {
     I8,
@@ -54,31 +57,147 @@ impl OperandType {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Instruction {
-    name: String,
-    modes: Option<Vec<Mode>>,
+    pub name: String,
+    pub modes: Option<Vec<Mode>>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Eq, Hash, PartialEq)]
 pub struct Mode {
-    name: String,
-    operand_types: Option<Vec<OperandType>>,
-    arg0_types: Option<Vec<OperandType>>,
-    arg1_types: Option<Vec<OperandType>>,
-    result_type: Option<ResultType>,
-    memory: Option<bool>,
+    pub name: String,
+    pub operand_types: Option<Vec<OperandType>>,
+    pub arg0_types: Option<Vec<OperandType>>,
+    pub arg1_types: Option<Vec<OperandType>>,
+    pub result_type: Option<ResultType>,
+    pub memory: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+impl Mode {
+    pub fn intersect(&self, other: &Mode) -> Option<Mode> {
+        if self.name != other.name {
+            return None;
+        }
+
+        let operand_types = intersect_optional_vec(&self.operand_types, &other.operand_types);
+
+        let arg0_types = intersect_optional_vec(&self.arg0_types, &other.arg0_types);
+
+        let arg1_types = intersect_optional_vec(&self.arg1_types, &other.arg1_types);
+
+        let result_type = match (&self.result_type, &other.result_type) {
+            (Some(a), Some(b)) if a == b => Some(a.clone()),
+            (None, None) => None,
+            _ => return None,
+        };
+
+        let memory = match (&self.memory, &other.memory) {
+            (Some(a), Some(b)) if a == b => Some(*a),
+            (None, None) => None,
+            _ => return None,
+        };
+
+        Some(Mode {
+            name: self.name.clone(),
+            operand_types,
+            arg0_types,
+            arg1_types,
+            result_type,
+            memory,
+        })
+    }
+}
+
+fn intersect_optional_vec<T>(vec1: &Option<Vec<T>>, vec2: &Option<Vec<T>>) -> Option<Vec<T>>
+where
+    T: Clone + Eq + std::hash::Hash,
+{
+    match (vec1, vec2) {
+        (Some(v1), Some(v2)) => {
+            let set1: HashSet<_> = v1.iter().cloned().collect();
+            let set2: HashSet<_> = v2.iter().cloned().collect();
+            let intersection: Vec<T> = set1.intersection(&set2).cloned().collect();
+
+            if intersection.is_empty() {
+                None
+            } else {
+                Some(intersection)
+            }
+        }
+        (None, None) => None,
+        _ => None,
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct ArchConfig {
-    instructions: Vec<Instruction>,
+    pub arch: String,
+    pub operand_types: Vec<OperandType>,
+    pub instructions: Vec<Instruction>,
+    pub tests: Vec<String>,
+    pub config_sets: HashMap<String, String>,
+    pub target: Vec<String>,
+
+    #[serde(skip)]
+    pub instruction_map: HashMap<String, Instruction>,
 }
 
 impl ArchConfig {
-    fn build_instruction_map(&self) -> HashMap<String, Instruction> {
-        let mut map = HashMap::new();
-        for instr in &self.instructions {
-            map.insert(instr.name.clone(), instr.clone());
-        }
-        map
+    pub fn build_instruction_map(&mut self) {
+        self.instruction_map = self
+            .instructions
+            .iter()
+            .map(|instr| (instr.name.clone(), instr.clone()))
+            .collect();
     }
+}
+
+pub fn config_intersection(config_paths: Vec<&str>) -> Result<ArchConfig, String> {
+    let mut final_config = ArchConfig::default();
+
+    let configs: Vec<ArchConfig> = config_paths
+        .iter()
+        .map(|&path| {
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| format!("Failed to read config file {}: {}", path, e))?;
+            toml::from_str(&content)
+                .map_err(|e| format!("Failed to parse config file {}: {}", path, e))
+        })
+        .collect::<Result<Vec<ArchConfig>, String>>()?;
+
+    final_config = configs[0].clone();
+
+    for config in &configs[1..] {
+        for instr in &mut final_config.instructions {
+            if let Some(other_instr) = config.instructions.iter().find(|i| i.name == instr.name) {
+                instr.modes = match (&instr.modes, &other_instr.modes) {
+                    (Some(self_modes), Some(other_modes)) => {
+                        let mut intersected_modes = Vec::new();
+
+                        for self_mode in self_modes {
+                            for other_mode in other_modes {
+                                if let Some(intersected_mode) = self_mode.intersect(other_mode) {
+                                    intersected_modes.push(intersected_mode);
+                                }
+                            }
+                        }
+
+                        if intersected_modes.is_empty() {
+                            None
+                        } else {
+                            Some(intersected_modes)
+                        }
+                    }
+                    _ => None,
+                };
+            } else {
+                instr.modes = None;
+            }
+        }
+    }
+
+    Ok(final_config)
+}
+
+pub fn load_config(path: &str) -> ArchConfig {
+    let content = fs::read_to_string(path).expect("Failed to read config file");
+    toml::from_str(&content).expect("Failed to parse config")
 }

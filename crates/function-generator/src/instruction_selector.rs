@@ -1,3 +1,5 @@
+use commons::types::ArchConfig;
+use commons::types::Instruction;
 use cranelift_codegen::cursor::FuncCursor;
 use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir;
@@ -163,9 +165,6 @@ pub fn get_random_cond_value(
         get_dominator_values_with_type(dominator_blocks, block_dominator_values, ir::types::I32);
     random_values_i32.sort_by(|a, b| b.as_u32().cmp(&a.as_u32()));
 
-    for value in random_values_i32.iter() {
-        println!("{}", value.as_u32());
-    }
     let random_value = select_random_value(&random_values_i32, 0.4).unwrap();
     return *random_value;
 }
@@ -175,6 +174,7 @@ pub fn populate_block_instructions(
     instr_data: InstructionData,
     dominator_blocks: &HashSet<Block>,
     block_dominator_values: &HashMap<Block, HashSet<TypedValue>>,
+    config: &ArchConfig,
 ) -> Option<(Option<TypedValue>, Option<Vec<TypedValue>>)> {
     fn instr_mutation() -> Opcode {
         let mut rng = thread_rng();
@@ -184,17 +184,29 @@ pub fn populate_block_instructions(
 
     let mut rng = thread_rng();
 
-    let all_types = [
-        I8, I16, I32, I64, F16, F32, F64, I8X16, I16X8, F16X8, I32X4, F32X4, I64X2, F64X2,
-    ];
-    let scalar_types = [I8, I16, I32, I64];
-    let integer_types = [I8, I16, I32, I64];
-    let float_types = [F16, F32, F64];
-    let vector_types = [I8X16, I16X8, F16X8, I32X4, F32X4, I64X2, F64X2];
-    let vector_integer_types = [I8X16, I16X8, I32X4, I64X2];
-    let vector_float_types = [F16X8, F32X4, F64X2];
-
     let instr_opcode = instr_mutation();
+
+    let instr_config = config
+        .instruction_map
+        .get(instr_opcode.to_string().as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "Instruction {} not found in config",
+                instr_opcode.to_string()
+            );
+        });
+
+    let modes = instr_config.modes.as_ref();
+    if modes.is_none() {
+        return None;
+    }
+
+    let mode = instr_config
+        .modes
+        .as_ref()
+        .unwrap()
+        .choose(&mut rng)
+        .unwrap();
 
     match instr_opcode {
         Opcode::AtomicCas => {
@@ -211,24 +223,8 @@ pub fn populate_block_instructions(
                 Offset32::new(rng.gen_range(0..10)),
             );
 
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -272,24 +268,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::AtomicRmw => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let atomic_op = [
                 AtomicRmwOp::Add,
@@ -338,16 +318,22 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Swizzle => {
-            let mut random_values_with_same_type =
-                get_dominator_values_with_type(dominator_blocks, block_dominator_values, I8X16);
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
+            let mut random_values_with_same_type = get_dominator_values_with_type(
+                dominator_blocks,
+                block_dominator_values,
+                value_type,
+            );
             match random_values_with_same_type.len() {
                 0 => return None,
                 1 => {
                     let ref_value = random_values_with_same_type.pop().unwrap();
                     let new_value = cur.ins().swizzle(ref_value, ref_value);
                     return Some((
-                        Some(TypedValue::new(new_value, ir::types::I8X16)),
-                        Some(vec![TypedValue::new(ref_value, ir::types::I8X16)]),
+                        Some(TypedValue::new(new_value, value_type)),
+                        Some(vec![TypedValue::new(ref_value, value_type)]),
                     ));
                 }
                 _ => {
@@ -358,10 +344,10 @@ pub fn populate_block_instructions(
 
                     let new_value = cur.ins().swizzle(first_value, second_value);
                     return Some((
-                        Some(TypedValue::new(new_value, ir::types::I8X16)),
+                        Some(TypedValue::new(new_value, value_type)),
                         Some(vec![
-                            TypedValue::new(first_value, ir::types::I8X16),
-                            TypedValue::new(second_value, ir::types::I8X16),
+                            TypedValue::new(first_value, value_type),
+                            TypedValue::new(second_value, value_type),
                         ]),
                     ));
                 }
@@ -370,16 +356,22 @@ pub fn populate_block_instructions(
 
         #[cfg(feature = "x86-64")]
         Opcode::X86Pshufb => {
-            let mut random_values_with_same_type =
-                get_dominator_values_with_type(dominator_blocks, block_dominator_values, I8X16);
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
+            let mut random_values_with_same_type = get_dominator_values_with_type(
+                dominator_blocks,
+                block_dominator_values,
+                value_type,
+            );
             match random_values_with_same_type.len() {
                 0 => return None,
                 1 => {
                     let ref_value = random_values_with_same_type.pop().unwrap();
                     let new_value = cur.ins().x86_pshufb(ref_value, ref_value);
                     return Some((
-                        Some(TypedValue::new(new_value, I8X16)),
-                        Some(vec![TypedValue::new(ref_value, I8X16)]),
+                        Some(TypedValue::new(new_value, value_type)),
+                        Some(vec![TypedValue::new(ref_value, value_type)]),
                     ));
                 }
                 _ => {
@@ -390,10 +382,10 @@ pub fn populate_block_instructions(
 
                     let new_value = cur.ins().x86_pshufb(first_value, second_value);
                     return Some((
-                        Some(TypedValue::new(new_value, I8X16)),
+                        Some(TypedValue::new(new_value, value_type)),
                         Some(vec![
-                            TypedValue::new(first_value, I8X16),
-                            TypedValue::new(second_value, I8X16),
+                            TypedValue::new(first_value, value_type),
+                            TypedValue::new(second_value, value_type),
                         ]),
                     ));
                 }
@@ -401,24 +393,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Smin => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -453,24 +429,8 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::Umin => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -505,24 +465,8 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::Smax => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -557,24 +501,8 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::Umax => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -610,24 +538,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::AvgRound => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -663,24 +575,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::UaddSat => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -716,24 +612,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::SaddSat => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -769,24 +649,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::UsubSat => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -822,24 +686,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::SsubSat => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -875,24 +723,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Iadd => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -927,24 +759,8 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::Isub => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -979,24 +795,8 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::Imul => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1032,24 +832,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Umulhi => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1085,24 +869,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Smulhi => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1138,24 +906,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::SqmulRoundSat => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16X8])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16X8])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16X8])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16X8])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -1191,7 +944,8 @@ pub fn populate_block_instructions(
 
         #[cfg(feature = "x86-64")]
         Opcode::X86Pmaddubsw => {
-            let value_type = I8X16;
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1227,24 +981,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Udiv => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1280,24 +1018,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Sdiv => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1333,24 +1055,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Urem => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1386,24 +1092,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Srem => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1440,24 +1130,8 @@ pub fn populate_block_instructions(
 
         #[cfg(not(any(feature = "riscv", feature = "s390x")))]
         Opcode::UaddOverflow => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1494,24 +1168,8 @@ pub fn populate_block_instructions(
 
         #[cfg(not(any(feature = "riscv", feature = "s390x")))]
         Opcode::SaddOverflow => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1548,24 +1206,8 @@ pub fn populate_block_instructions(
 
         #[cfg(not(any(feature = "riscv", feature = "s390x")))]
         Opcode::UsubOverflow => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1602,24 +1244,8 @@ pub fn populate_block_instructions(
 
         #[cfg(not(any(feature = "riscv", feature = "s390x")))]
         Opcode::SsubOverflow => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1656,24 +1282,8 @@ pub fn populate_block_instructions(
 
         #[cfg(not(any(feature = "riscv", feature = "s390x")))]
         Opcode::UmulOverflow => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1710,24 +1320,8 @@ pub fn populate_block_instructions(
 
         #[cfg(not(any(feature = "riscv", feature = "s390x")))]
         Opcode::SmulOverflow => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1763,35 +1357,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Band => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F32, F64, I8X16, I16X8, I32X4, I64X2, F16X8,
-                        F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                        F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                        F64X2,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1827,34 +1394,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Bor => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F32, F64, I8X16, I16X8, I32X4, I64X2, F16X8,
-                        F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                        F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1890,34 +1431,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Bxor => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F32, F64, I8X16, I16X8, I32X4, I64X2, F16X8,
-                        F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                        F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -1953,34 +1468,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::BandNot => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F32, F64, I8X16, I16X8, I32X4, I64X2, F16X8,
-                        F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                        F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -2016,34 +1505,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::BorNot => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F32, F64, I8X16, I16X8, I32X4, I64X2, F16X8,
-                        F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                        F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -2079,34 +1542,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::BxorNot => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F32, F64, I8X16, I16X8, I32X4, I64X2, F16X8,
-                        F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                        F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -2142,43 +1579,11 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Rotl => {
-            let arg0_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-            };
+            let arg0_types = mode.arg0_types.as_ref().unwrap();
+            let arg0_value_type = arg0_types.choose(&mut rng).unwrap().to_cranelift_type();
 
-            let arg1_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let arg1_types = mode.arg1_types.as_ref().unwrap();
+            let arg1_value_type = arg1_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
@@ -2205,43 +1610,11 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Rotr => {
-            let arg0_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-            };
+            let arg0_types = mode.arg0_types.as_ref().unwrap();
+            let arg0_value_type = arg0_types.choose(&mut rng).unwrap().to_cranelift_type();
 
-            let arg1_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let arg1_types = mode.arg1_types.as_ref().unwrap();
+            let arg1_value_type = arg1_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
@@ -2268,43 +1641,11 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Ishl => {
-            let arg0_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let arg0_types = mode.arg0_types.as_ref().unwrap();
+            let arg0_value_type = arg0_types.choose(&mut rng).unwrap().to_cranelift_type();
 
-            let arg1_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let arg1_types = mode.arg1_types.as_ref().unwrap();
+            let arg1_value_type = arg1_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
@@ -2331,43 +1672,11 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Ushr => {
-            let arg0_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let arg0_types = mode.arg0_types.as_ref().unwrap();
+            let arg0_value_type = arg0_types.choose(&mut rng).unwrap().to_cranelift_type();
 
-            let arg1_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let arg1_types = mode.arg1_types.as_ref().unwrap();
+            let arg1_value_type = arg1_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
@@ -2394,43 +1703,11 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Sshr => {
-            let arg0_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let arg0_types = mode.arg0_types.as_ref().unwrap();
+            let arg0_value_type = arg0_types.choose(&mut rng).unwrap().to_cranelift_type();
 
-            let arg1_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let arg1_types = mode.arg1_types.as_ref().unwrap();
+            let arg1_value_type = arg1_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
@@ -2457,24 +1734,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Fadd => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -2509,24 +1771,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Fsub => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -2561,24 +1808,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Fmul => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -2613,24 +1845,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Fdiv => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -2665,24 +1882,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Fcopysign => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -2717,24 +1919,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Fmin => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -2769,24 +1956,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Fmax => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -2821,24 +1993,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Snarrow => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16X8, I32X4])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16X8, I32X4])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16X8, I32X4])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16X8, I32X4])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -2913,24 +2070,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Unarrow => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16X8, I32X4])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16X8, I32X4])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16X8, I32X4])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16X8, I32X4])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -2990,8 +2132,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Uunarrow => {
-            let substitute_types = [I16X8, I32X4, I64X2];
-            let value_type = *substitute_types.choose(&mut rng).unwrap();
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3067,24 +2210,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::IaddPairwise => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3117,24 +2245,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Iconcat => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut iconcated_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3178,24 +2291,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::IaddImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3214,24 +2312,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::ImulImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3250,24 +2333,8 @@ pub fn populate_block_instructions(
         }
 
         Opcode::UdivImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
@@ -3287,24 +2354,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::SdivImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3323,24 +2375,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::UremImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3358,24 +2395,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::SremImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3394,24 +2416,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::IrsubImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3430,24 +2437,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::BandImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3466,24 +2458,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::BorImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3502,24 +2479,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::BxorImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3538,24 +2500,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::RotlImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3574,24 +2521,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::RotrImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3610,24 +2542,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::IshlImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3646,24 +2563,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::UshrImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3682,24 +2584,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::SshrImm => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3718,24 +2605,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Extractlane => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let (result_type, max_lane) = extract_vector_type(value_type);
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -3787,27 +2659,10 @@ pub fn populate_block_instructions(
 
         Opcode::Trapz => {
             return None;
-
-            let value_type = random_type(&scalar_types);
-            let dominator_values = get_dominator_values_with_type(
-                dominator_blocks,
-                block_dominator_values,
-                value_type,
-            );
-            let controlling_value = *select_random_value(&dominator_values, 0.4).unwrap();
-            cur.ins().trapz(controlling_value, TrapCode::StackOverflow);
         }
 
         Opcode::Trapnz => {
             return None;
-            let value_type = random_type(&scalar_types);
-            let dominator_values = get_dominator_values_with_type(
-                dominator_blocks,
-                block_dominator_values,
-                value_type,
-            );
-            let controlling_value = *select_random_value(&dominator_values, 0.4).unwrap();
-            cur.ins().trapnz(controlling_value, TrapCode::StackOverflow);
         }
 
         Opcode::DynamicStackLoad => {
@@ -3823,24 +2678,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Fcmp => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut fcmped_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -3850,7 +2690,6 @@ pub fn populate_block_instructions(
             let fcmp_cond = loop {
                 let &cc = FloatCC::all().choose(&mut rng).unwrap();
 
-                #[cfg(feature = "aarch64")]
                 if matches!(
                     cc,
                     FloatCC::UnorderedOrLessThan
@@ -3947,24 +2786,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::UaddOverflowTrap => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut uadded_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -4011,24 +2835,9 @@ pub fn populate_block_instructions(
 
 
             */
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -4117,24 +2926,9 @@ pub fn populate_block_instructions(
 
         Opcode::IcmpImm => {
             let cond_all = IntCC::all();
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -4173,35 +2967,8 @@ pub fn populate_block_instructions(
             let mut mem_flag_little = ir::MemFlags::new();
             mem_flag_little.set_endianness(Endianness::Little);
 
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F16X8,
-                        F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                        F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4,
-                        F64X2,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let new_value = cur.ins().load(
                 value_type,
@@ -4224,24 +2991,9 @@ pub fn populate_block_instructions(
                 .ins()
                 .stack_addr(I64, random_stack_slot, Offset32::new(0));
 
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut mem_flag_little = ir::MemFlags::new();
             mem_flag_little.set_endianness(Endianness::Little);
             let new_value = cur.ins().uload8(
@@ -4264,24 +3016,9 @@ pub fn populate_block_instructions(
                 .ins()
                 .stack_addr(I64, random_stack_slot, Offset32::new(0));
 
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut mem_flag_little = ir::MemFlags::new();
             mem_flag_little.set_endianness(Endianness::Little);
             let new_value = cur.ins().sload8(
@@ -4293,24 +3030,8 @@ pub fn populate_block_instructions(
             return Some((Some(TypedValue::new(new_value, value_type)), None));
         }
         Opcode::Uload16 => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let random_stack_slot = cur
                 .func
@@ -4333,24 +3054,9 @@ pub fn populate_block_instructions(
             return Some((Some(TypedValue::new(new_value, value_type)), None));
         }
         Opcode::Sload16 => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let random_stack_slot = cur
                 .func
                 .sized_stack_slots
@@ -4408,7 +3114,6 @@ pub fn populate_block_instructions(
             return Some((Some(TypedValue::new(new_value, I64)), None));
         }
         Opcode::Uload8x8 => {
-            return None;
             let random_stack_slot = cur
                 .func
                 .sized_stack_slots
@@ -4427,7 +3132,6 @@ pub fn populate_block_instructions(
             return Some((Some(TypedValue::new(new_value, I16X8)), None));
         }
         Opcode::Sload8x8 => {
-            return None;
             let random_stack_slot = cur
                 .func
                 .sized_stack_slots
@@ -4446,7 +3150,6 @@ pub fn populate_block_instructions(
             return Some((Some(TypedValue::new(new_value, I16X8)), None));
         }
         Opcode::Uload16x4 => {
-            return None;
             let random_stack_slot = cur
                 .func
                 .sized_stack_slots
@@ -4465,7 +3168,6 @@ pub fn populate_block_instructions(
             return Some((Some(TypedValue::new(new_value, I32X4)), None));
         }
         Opcode::Sload16x4 => {
-            return None;
             let random_stack_slot = cur
                 .func
                 .sized_stack_slots
@@ -4485,7 +3187,6 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Uload32x2 => {
-            return None;
             let random_stack_slot = cur
                 .func
                 .sized_stack_slots
@@ -4505,7 +3206,6 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Sload32x2 => {
-            return None;
             let random_stack_slot = cur
                 .func
                 .sized_stack_slots
@@ -4525,24 +3225,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Bitcast => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I32, I64, F32, F64, I16X8, I32X4, I64X2, F16X8, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I32, I64, F32, F64, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I32, I64, F32, F64, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I32, I64, F32, F64, I128, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let candidate_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -4571,24 +3256,10 @@ pub fn populate_block_instructions(
             let addr = cur
                 .ins()
                 .stack_addr(I64, random_stack_slot, Offset32::new(0));
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut mem_flag_little = ir::MemFlags::new();
             mem_flag_little.set_endianness(Endianness::Little);
             let new_value = cur.ins().atomic_load(value_type, mem_flag_little, addr);
@@ -4628,24 +3299,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Shuffle => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -4689,32 +3345,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::StackLoad => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F16X8, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let random_stack_slot = cur
                 .func
                 .sized_stack_slots
@@ -4747,32 +3380,9 @@ pub fn populate_block_instructions(
 
         #[cfg(not(feature = "s390x"))]
         Opcode::StackStore => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -4807,32 +3417,9 @@ pub fn populate_block_instructions(
                 .ins()
                 .stack_addr(I64, random_stack_slot, Offset32::new(0));
 
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -4861,24 +3448,9 @@ pub fn populate_block_instructions(
                 .ins()
                 .stack_addr(ir::types::I64, random_stack_slot, Offset32::new(0));
 
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -4893,24 +3465,8 @@ pub fn populate_block_instructions(
             return Some((None, Some(vec![TypedValue::new(ref_value, value_type)])));
         }
         Opcode::Istore16 => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let random_stack_slot = cur
                 .func
@@ -4937,24 +3493,8 @@ pub fn populate_block_instructions(
             return Some((None, Some(vec![TypedValue::new(ref_value, value_type)])));
         }
         Opcode::Istore32 => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let random_stack_slot = cur
                 .func
@@ -4981,24 +3521,8 @@ pub fn populate_block_instructions(
             return Some((None, Some(vec![TypedValue::new(ref_value, value_type)])));
         }
         Opcode::AtomicStore => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let random_stack_slot = cur
                 .func
@@ -5026,56 +3550,22 @@ pub fn populate_block_instructions(
             return None;
         }
         Opcode::Select => {
-            let control_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let control_value_types = mode.arg0_types.as_ref().unwrap();
+            let control_value_type = control_value_types
+                .choose(&mut rng)
+                .unwrap()
+                .to_cranelift_type();
+
             let control_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
                 control_value_type,
             );
             let control_value = *select_random_value(&control_values_with_same_type, 0.4).unwrap();
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+
+            let value_types = mode.arg0_types.as_ref().unwrap();
+            let value_type = value_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let ref_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5094,56 +3584,22 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::SelectSpectreGuard => {
-            let control_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64])
-                }
-            };
+            let control_value_types = mode.arg0_types.as_ref().unwrap();
+            let control_value_type = control_value_types
+                .choose(&mut rng)
+                .unwrap()
+                .to_cranelift_type();
+
             let control_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
                 control_value_type,
             );
             let control_value = *select_random_value(&control_values_with_same_type, 0.4).unwrap();
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+
+            let value_types = mode.arg0_types.as_ref().unwrap();
+            let value_type = value_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let ref_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5164,28 +3620,12 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Bitselect => {
-            let control_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, F32, F64, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let control_value_types = mode.operand_types.as_ref().unwrap();
+            let control_value_type = control_value_types
+                .choose(&mut rng)
+                .unwrap()
+                .to_cranelift_type();
+
             let control_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5208,24 +3648,9 @@ pub fn populate_block_instructions(
             return None;
         }
         Opcode::Fma => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5252,24 +3677,9 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::Insertlane => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let (result_type, max_lane) = extract_vector_type(value_type);
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
@@ -5312,24 +3722,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::Splat => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let (lane_type, max_lane) = extract_vector_type(value_type);
             let random_values_with_same_type =
                 get_dominator_values_with_type(dominator_blocks, block_dominator_values, lane_type);
@@ -5351,24 +3746,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::VanyTrue => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F16X8, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5383,24 +3763,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::VallTrue => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F16X8, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5415,24 +3780,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::VhighBits => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5477,24 +3827,9 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::Ineg => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5511,24 +3846,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Iabs => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I8X16, I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5546,33 +3866,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Bnot => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, F16, F32, F64, I8X16, I16X8, I32X4, I64X2, F16X8,
-                        F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[
-                        I8, I16, I32, I64, I128, I8X16, I16X8, I32X4, I64X2, F32X4, F64X2,
-                    ])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5589,24 +3885,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Bitrev => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5624,24 +3905,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Clz => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5660,24 +3926,9 @@ pub fn populate_block_instructions(
         }
         #[cfg(not(feature = "x86-64"))]
         Opcode::Cls => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5695,24 +3946,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Ctz => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5730,24 +3966,8 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Bswap => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
 
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
@@ -5766,24 +3986,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Popcnt => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128, I8X16])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5801,24 +4006,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Sqrt => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5833,24 +4023,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Fneg => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5865,24 +4040,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Fabs => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5897,24 +4057,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Ceil => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5929,24 +4074,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Floor => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5961,24 +4091,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Trunc => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -5993,24 +4108,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Nearest => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -6026,24 +4126,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::ScalarToVector => {
-            let result_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8X16, I16X8, I32X4, I64X2, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let result_value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let (value_type, max_lane) = extract_vector_type(result_value_type);
             let mut candidate_values = get_dominator_values_with_type(
                 dominator_blocks,
@@ -6063,42 +4148,12 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::Bmask => {
-            let target_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-            };
-            let param_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32, I64, I128])
-                }
-            };
+            let arg0_types = mode.arg0_types.as_ref().unwrap();
+            let target_value_type = arg0_types.choose(&mut rng).unwrap().to_cranelift_type();
+
+            let arg1_types = mode.arg1_types.as_ref().unwrap();
+            let param_value_type = arg1_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -6113,24 +4168,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Ireduce => {
-            let to_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I8, I16, I32])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I8, I16, I32])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I8, I16, I32])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I8, I16, I32])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let to_value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let from_value_type = match to_value_type {
                 I8 => random_type(&[I16, I32, I64]),
                 I16 => random_type(&[I32, I64]),
@@ -6152,24 +4192,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::SwidenLow => {
-            let to_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let to_value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let from_value_type = match to_value_type {
                 I16X8 => I8X16,
                 I32X4 => I16X8,
@@ -6191,24 +4216,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::SwidenHigh => {
-            let to_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let to_value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let from_value_type = match to_value_type {
                 I16X8 => I8X16,
                 I32X4 => I16X8,
@@ -6230,24 +4240,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::UwidenLow => {
-            let to_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let to_value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let from_value_type = match to_value_type {
                 I16X8 => I8X16,
                 I32X4 => I16X8,
@@ -6269,24 +4264,9 @@ pub fn populate_block_instructions(
         }
 
         Opcode::UwidenHigh => {
-            let to_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16X8, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let to_value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let from_value_type = match to_value_type {
                 I16X8 => I8X16,
                 I32X4 => I16X8,
@@ -6313,24 +4293,9 @@ pub fn populate_block_instructions(
             ;; I{8,16,32} -> I64.
             ;; I{8,16,32,64} -> I128.
             */
-            let to_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let to_value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let from_value_type = match to_value_type {
                 I16 => random_type(&[I8]),
                 I32 => random_type(&[I8, I16]),
@@ -6352,24 +4317,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::Sextend => {
-            let to_value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16, I32, I64, I128])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let to_value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let from_value_type = match to_value_type {
                 I16 => random_type(&[I8]),
                 I32 => random_type(&[I8, I16]),
@@ -6441,24 +4391,9 @@ pub fn populate_block_instructions(
             ));
         }
         Opcode::FcvtToUint => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -6486,24 +4421,9 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::FcvtToSint => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -6532,24 +4452,9 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::FcvtToUintSat => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -6592,24 +4497,9 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::FcvtToSintSat => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32, F64, F32X4])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32, F64, F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -6651,26 +4541,10 @@ pub fn populate_block_instructions(
                 }
             }
         }
-        #[cfg(feature = "x86-64")]
         Opcode::X86Cvtt2dq => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[F32X4])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[F32X4, F64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[F32X4, F64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[F32X4, F64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -6699,24 +4573,9 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::FcvtFromUint => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I32, I64, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I32, I64, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I32, I64, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I32, I64, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -6759,24 +4618,9 @@ pub fn populate_block_instructions(
             }
         }
         Opcode::FcvtFromSint => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I32, I64, I32X4, I64X2])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I32, I64, I32X4, I64X2])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I32, I64, I32X4, I64X2])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I32, I64, I32X4, I64X2])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let dominator_values = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,
@@ -6843,7 +4687,6 @@ pub fn populate_block_instructions(
         Opcode::TlsValue => {
             return None;
         }
-        #[cfg(not(feature = "s390x"))]
         Opcode::F16const => {
             return None;
             let new_value = cur.ins().f16const(Ieee16::with_bits(rng.random::<u16>()));
@@ -6886,26 +4729,10 @@ pub fn populate_block_instructions(
                 }
             }
         }
-        #[cfg(feature = "x86-64")]
         Opcode::X86Pmulhrsw => {
-            let value_type = {
-                #[cfg(feature = "x86-64")]
-                {
-                    random_type(&[I16X8])
-                }
-                #[cfg(feature = "aarch64")]
-                {
-                    random_type(&[I16X8])
-                }
-                #[cfg(feature = "riscv")]
-                {
-                    random_type(&[I16X8])
-                }
-                #[cfg(feature = "s390x")]
-                {
-                    random_type(&[I16X8])
-                }
-            };
+            let operand_types = mode.operand_types.as_ref().unwrap();
+            let value_type = operand_types.choose(&mut rng).unwrap().to_cranelift_type();
+
             let mut random_values_with_same_type = get_dominator_values_with_type(
                 dominator_blocks,
                 block_dominator_values,

@@ -1,741 +1,760 @@
 arch = "s390x"
 
+# operand_types
+operand_types = ["i8", "i16", "i32", "i64", "i128", "f32", "f64", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"]
+
+
+
+# tests
+tests = ["inline", "precise-output", "optimize"]
+
+# config_sets
+config_sets = { preserve_frame_pointers = "true", enable_multi_ret_implicit_sret = "true", enable_nan_canonicalization = "true" }
+
+
+# target
+target = [
+  "x86_64 sse42 has_avx",
+  "aarch64",
+  "s390x",
+  "riscv64gc has_zcd has_zbkb has_zbc has_zbs has_zicond has_zvl32b has_zvl64b has_zvl128b has_zvl1024b has_zvl2048b has_zvl4096b has_zvl8192b has_zvl16384b has_zvl32768b"
+]
+
 [[instructions]]
-name = "AtomicCas"
+name = "atomic_cas"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "AtomicRmw"
+name = "atomic_rmw"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Swizzle"
+name = "swizzle"
 modes = [
   { name = "default", operand_types = ["i8x16"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Smin"
+name = "smin"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Umin"
+name = "umin"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Smax"
+name = "smax"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Umax"
+name = "umax"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "AvgRound"
+name = "avg_round"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "UaddSat"
+name = "uadd_sat"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "SaddSat"
+name = "sadd_sat"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "UsubSat"
+name = "usub_sat"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "SsubSat"
+name = "ssub_sat"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Iadd"
+name = "iadd"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Isub"
+name = "isub"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Imul"
+name = "imul"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Umulhi"
+name = "umulhi"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Smulhi"
+name = "smulhi"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i8x16", "i16x8", "i32x4", "i64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "SqmulRoundSat"
+name = "sqmul_round_sat"
 modes = [
   { name = "default", operand_types = ["i16x8"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Udiv"
+name = "udiv"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Sdiv"
+name = "sdiv"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Urem"
+name = "urem"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Srem"
+name = "srem"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Band"
+name = "band"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Bor"
+name = "bor"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Bxor"
+name = "bxor"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "BandNot"
+name = "band_not"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "BorNot"
+name = "bor_not"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "BxorNot"
+name = "bxor_not"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Rotl"
+name = "rotl"
 modes = [
   { name = "default", arg0_types = ["i8", "i16", "i32", "i64", "i128"], arg1_types = ["i8", "i16", "i32", "i64"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "Rotr"
+name = "rotr"
 modes = [
   { name = "default", arg0_types = ["i8", "i16", "i32", "i64", "i128"], arg1_types = ["i8", "i16", "i32", "i64"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "Ishl"
+name = "ishl"
 modes = [
   { name = "default", arg0_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2"], arg1_types = ["i8", "i16", "i32", "i64"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "Ushr"
+name = "ushr"
 modes = [
   { name = "default", arg0_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2"], arg1_types = ["i8", "i16", "i32", "i64"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "Sshr"
+name = "sshr"
 modes = [
   { name = "default", arg0_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2"], arg1_types = ["i8", "i16", "i32", "i64"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "Fadd"
+name = "fadd"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Fsub"
+name = "fsub"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Fmul"
+name = "fmul"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Fdiv"
+name = "fdiv"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Fcopysign"
+name = "fcopysign"
 modes = [
   { name = "default", operand_types = ["f32", "f64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Fmin"
+name = "fmin"
 modes = [
   { name = "default", operand_types = ["f32", "f64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Fmax"
+name = "fmax"
 modes = [
   { name = "default", operand_types = ["f32", "f64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Snarrow"
+name = "snarrow"
 modes = [
   { name = "default", operand_types = ["i16x8", "i32x4"], result_type = "conditional" }
 ]
 
 [[instructions]]
-name = "Unarrow"
+name = "unarrow"
 modes = [
   { name = "default", operand_types = ["i16x8", "i32x4"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "Uunarrow"
+name = "uunarrow"
 modes = [
   { name = "default", operand_types = ["i16x8", "i32x4", "i64x2"], result_type = "conditional"}
 ]
 
 [[instructions]]
-name = "IaddPairwise"
+name = "iadd_pairwise"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Iconcat"
+name = "iconcat"
 modes = [
   { name = "default", operand_types = ["i64"], result_type = "conditional"},
 ]
 
 [[instructions]]
-name = "IaddImm"
+name = "iadd_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "ImulImm"
+name = "imul_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "UdivImm"
+name = "udiv_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "SdivImm"
+name = "sdiv_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "UremImm"
+name = "urem_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "SremImm"
+name = "srem_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "IrsubImm"
+name = "irsub_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "BandImm"
+name = "band_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "BorImm"
+name = "bor_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "BxorImm"
+name = "bxor_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "RotlImm"
+name = "rotl_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "RotrImm"
+name = "rotr_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "IshlImm"
+name = "ishl_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "UshrImm"
+name = "ushr_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "SshrImm"
+name = "sshr_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "same" },
 ]
 
 [[instructions]]
-name = "Extractlane"
+name = "extractlane"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "ExtractVector"
+name = "extract_vector"
 
 
 [[instructions]]
-name = "Fcmp"
+name = "fcmp"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "UaddOverflowTrap"
+name = "uadd_overflow_trap"
 modes = [
   { name = "default", operand_types = ["i32", "i64"], result_type = "same"},
 ]
 
 
 [[instructions]]
-name = "Icmp"
+name = "icmp"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "IcmpImm"
+name = "icmp_imm"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "Load"
+name = "load"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "f32", "f64", "i8x16", "i16x8", "i32x4", "i64x2","f32x4", "f64x2"], memory = true},
 ]
 
 [[instructions]]
-name = "Uload8"
+name = "uload8"
 modes = [
   { name = "default", operand_types = ["i16", "i32", "i64"], memory = true},
 ]
 
 [[instructions]]
-name = "Sload8"
+name = "sload8"
 modes = [
   { name = "default", operand_types = ["i16", "i32", "i64"], memory = true},
 ]
 
 [[instructions]]
-name = "Uload16"
+name = "uload16"
 modes = [
   { name = "default", operand_types = ["i32", "i64"], memory = true},
 ]
 
 [[instructions]]
-name = "Sload16"
+name = "sload16"
 modes = [
-  { name = "default", operand_types = ["address"], result_type = "i32_i64" },
+  { name = "default", operand_types = ["i32", "i64"], memory = true},
 ]
 
 [[instructions]]
-name = "Uload32"
+name = "uload32"
 modes = [
   { name = "default", operand_types = ["i64"], memory = true},
 ]
 
 [[instructions]]
-name = "Sload32"
+name = "sload32"
 modes = [
   { name = "default", operand_types = ["i64"], memory = true},
 ]
 
 [[instructions]]
-name = "Uload8x8"
+name = "uload8x8"
 modes = [
   { name = "default", operand_types = ["i16x8"], memory = true},
 ]
 
 [[instructions]]
-name = "Sload8x8"
+name = "sload8x8"
 modes = [
   { name = "default", operand_types = ["i16x8"], memory = true},
 ]
 
 [[instructions]]
-name = "Uload16x4"
+name = "uload16x4"
 modes = [
   { name = "default", operand_types = ["i32x4"], memory = true},
 ]
 
 [[instructions]]
-name = "Sload16x4"
+name = "sload16x4"
 modes = [
   { name = "default", operand_types = ["i32x4"], memory = true},
 ]
 
 [[instructions]]
-name = "Uload32x2"
+name = "uload32x2"
 modes = [
   { name = "default", operand_types = ["i64x2"], memory = true},
 ]
 
 [[instructions]]
-name = "Sload32x2"
+name = "sload32x2"
 modes = [
   { name = "default", operand_types = ["i64x2"], memory = true},
 ]
 
 [[instructions]]
-name = "Bitcast"
+name = "bitcast"
 modes = [
-  { name = "default", operand_types = ["i32", "i64", "f32", "f64", "i128", "i16x8", "i32x4", "i64x2", "f16x8", "f32x4", "f64x2"], result_type = "conditional" },
+  { name = "default", operand_types = ["i32", "i64", "f32", "f64", "i128", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], result_type = "conditional" },
   
 ]
 
 
-
 [[instructions]]
-name = "Shuffle"
+name = "shuffle"
 modes = [
   { name = "default", operand_types = ["i8x16"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "StackLoad"
+name = "stack_load"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], result_type = "same", memory = true},
 ]
 
 
 [[instructions]]
-name = "StackAddr"
+name = "stack_addr"
 
 
 [[instructions]]
-name = "StackStore"
+name = "stack_store"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], memory = true },
 ]
 
 [[instructions]]
-name = "Store"
+name = "store"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], memory = true },
 ]
 
 
 [[instructions]]
-name = "Istore8"
+name = "istore8"
 modes = [
   { name = "default", operand_types = ["i16", "i32", "i64"], memory = true },
 ]
 
 [[instructions]]
-name = "Istore16"
+name = "istore16"
 modes = [
   { name = "default", operand_types = ["i32", "i64"], memory = true },
 ]
 
 
 [[instructions]]
-name = "Istore32"
+name = "istore32"
 modes = [
   { name = "default", operand_types = ["i64"], memory = true },
 ]
 
 
 [[instructions]]
-name = "AtomicStore"
+name = "atomic_store"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64"], memory = true },
 ]
 
 
 [[instructions]]
-name = "Select"
+name = "select"
 modes = [
   { name = "default", arg0_types = ["i8", "i16", "i32", "i64"], arg1_types = ["i8", "i16", "i32", "i64", "f32", "f64", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "SelectSpectreGuard"
+name = "select_spectre_guard"
 modes = [
   { name = "default", arg0_types = ["i8", "i16", "i32", "i64"], arg1_types = ["i8", "i16", "i32", "i64", "f32", "f64", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "Bitselect"
+name = "bitselect"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "f32", "f64", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"],  result_type = "same" },
 ]
 
 [[instructions]]
-name = "Fma"
+name = "fma"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"],  result_type = "same" },
 ]
 
 
 [[instructions]]
-name = "Insertlane"
+name = "insertlane"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"],  result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "Splat"
+name = "splat"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"],  result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "VanyTrue"
+name = "vany_true"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"],  result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "VallTrue"
+name = "vall_true"
 modes = [
-  { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2", "f16x8", "f32x4", "f64x2"],  result_type = "conditional" },
+  { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"],  result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "VhighBits"
+name = "vhigh_bits"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2"],  result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "Ineg"
+name = "ineg"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2"],  result_type = "same" },
 ]
 
 [[instructions]]
-name = "Iabs"
+name = "iabs"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i8x16", "i16x8", "i32x4", "i64x2"],  result_type = "same" },
 ]
 
 
 [[instructions]]
-name = "Bnot"
+name = "bnot"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"],  result_type = "same" },
 ]
 
 [[instructions]]
-name = "Bitrev"
+name = "bitrev"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128"],  result_type = "same" },
 ]
 
 [[instructions]]
-name = "Clz"
-modes = [
-  { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128"],  result_type = "same" },
-]
-
-
-[[instructions]]
-name = "Cls"
+name = "clz"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128"],  result_type = "same" },
 ]
 
 
 [[instructions]]
-name = "Ctz"
+name = "cls"
+modes = [
+  { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128"],  result_type = "same" },
+]
+
+
+[[instructions]]
+name = "ctz"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128"],  result_type = "same" },
 ]
 
 [[instructions]]
-name = "Bswap"
+name = "bswap"
 modes = [
   { name = "default", operand_types = ["i16", "i32", "i64", "i128"],  result_type = "same" },
 ]
 
 [[instructions]]
-name = "Popcnt"
+name = "popcnt"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32", "i64", "i128", "i8x16"],  result_type = "same" },
 ]
 
 
 [[instructions]]
-name = "Sqrt"
+name = "sqrt"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"],  result_type = "same" },
 ]
 
 
 [[instructions]]
-name = "Fneg"
+name = "fneg"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"],  result_type = "same" },
 ]
 
 
 [[instructions]]
-name = "Fabs"
+name = "fabs"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"],  result_type = "same" },
 ]
 
 
 [[instructions]]
-name = "Ceil"
+name = "ceil"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"],  result_type = "same" },
 ]
 
 [[instructions]]
-name = "Floor"
-modes = [
-  { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"],  result_type = "same" },
-]
-
-
-[[instructions]]
-name = "Trunc"
-modes = [
-  { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"],  result_type = "same" },
-]
-
-[[instructions]]
-name = "Nearest"
+name = "floor"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"],  result_type = "same" },
 ]
 
 
 [[instructions]]
-name = "ScalarToVector"
+name = "trunc"
+modes = [
+  { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"],  result_type = "same" },
+]
+
+[[instructions]]
+name = "nearest"
+modes = [
+  { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"],  result_type = "same" },
+]
+
+
+[[instructions]]
+name = "scalar_to_vector"
 modes = [
   { name = "default", operand_types = ["i8x16", "i16x8", "i32x4", "i64x2", "f32x4", "f64x2"],  result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "Bmask"
+name = "bmask"
 modes = [
   { name = "default", arg0_types = ["i8", "i16", "i32", "i64", "i128"], arg1_types = ["i8", "i16", "i32", "i64", "i128"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "Ireduce"
+name = "ireduce"
 modes = [
   { name = "default", operand_types = ["i8", "i16", "i32"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "SwidenLow"
+name = "swiden_low"
 modes = [
   { name = "default", operand_types = ["i16x8", "i32x4", "i64x2"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "SwidenHigh"
+name = "swiden_high"
 modes = [
   { name = "default", operand_types = ["i16x8", "i32x4", "i64x2"], result_type = "conditional" },
 ]
@@ -743,81 +762,81 @@ modes = [
 
 
 [[instructions]]
-name = "UwidenLow"
+name = "uwiden_low"
 modes = [
   { name = "default", operand_types = ["i16x8", "i32x4", "i64x2"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "UwidenHigh"
+name = "uwiden_high"
 modes = [
   { name = "default", operand_types = ["i16x8", "i32x4", "i64x2"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "Uextend"
+name = "uextend"
 modes = [
   { name = "default", operand_types = ["i16", "i32", "i64", "i128"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "Sextend"
+name = "sextend"
 modes = [
   { name = "default", operand_types = ["i16", "i32", "i64", "i128"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "Fpromote"
+name = "fpromote"
 modes = [
   { name = "default", operand_types = ["f32"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "Fdemote"
+name = "fdemote"
 modes = [
   { name = "default", operand_types = ["f64"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "Fvdemote"
+name = "fvdemote"
 modes = [
   { name = "default", operand_types = ["f64x2"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "FvpromoteLow"
+name = "fvpromote_low"
 modes = [
   { name = "default", operand_types = ["f32x4"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "FcvtToUint"
+name = "fcvt_to_uint"
 modes = [
   { name = "default", operand_types = ["f32", "f64"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "FcvtToSint"
+name = "fcvt_to_sint"
 modes = [
   { name = "default", operand_types = ["f32", "f64"], result_type = "conditional" },
 ]
 
 
 [[instructions]]
-name = "FcvtToUintSat"
+name = "fcvt_to_uint_sat"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "FcvtToSintSat"
+name = "fcvt_to_sint_sat"
 modes = [
   { name = "default", operand_types = ["f32", "f64", "f32x4", "f64x2"], result_type = "conditional" },
 ]
@@ -826,47 +845,202 @@ modes = [
 
 
 [[instructions]]
-name = "FcvtFromUint"
+name = "fcvt_from_uint"
 modes = [
   { name = "default", operand_types = ["i32", "i64", "i32x4", "i64x2"], result_type = "conditional" },
 ]
 
 [[instructions]]
-name = "FcvtFromSint"
+name = "fcvt_from_sint"
 modes = [
   { name = "default", operand_types = ["i32", "i64", "i32x4", "i64x2"], result_type = "conditional" },
 ]
 
+[[instructions]]
+name = "ssub_overflow"
 
 [[instructions]]
-name = "F16const"
+name = "sadd_overflow"
+
+[[instructions]]
+name = "smul_overflow"
+
+[[instructions]]
+name = "uadd_overflow"
+
+[[instructions]]
+name = "usub_overflow"
+
+[[instructions]]
+name = "umul_overflow"
+
+[[instructions]]
+name = "f16const"
 modes = [
   { name = "default"},
 ]
 
 
 [[instructions]]
-name = "F32const"
+name = "f32const"
 modes = [
   { name = "default"},
 ]
 
 [[instructions]]
-name = "F64const"
+name = "f64const"
 modes = [
   { name = "default"},
 ]
 
 
 [[instructions]]
-name = "F128const"
+name = "f128const"
 modes = [
   { name = "default"},
 ]
 
 [[instructions]]
-name = "Iconst"
+name = "iconst"
 modes = [
   { name = "default"},
 ]
 
+[[instructions]]
+name = "atomic_load"
+modes = [
+  { name = "default", operand_types = ["i8", "i16", "i32", "i64"], memory = true},
+]
+
+
+
+[[instructions]]
+name = "x86_pmulhrsw"
+
+
+[[instructions]]
+name = "trapnz"
+
+
+[[instructions]]
+name = "trapz"
+
+[[instructions]]
+name = "br_table"
+
+[[instructions]]
+name = "brif"
+
+[[instructions]]
+name = "call"
+
+[[instructions]]
+name = "call_indirect"
+
+[[instructions]]
+name = "return_call"
+
+
+[[instructions]]
+name = "return_call_indirect"
+
+[[instructions]]
+name = "isub_borrow"
+
+[[instructions]]
+name = "isub_bin"
+
+[[instructions]]
+name = "get_stack_pointer"
+
+[[instructions]]
+name = "get_frame_pointer"
+
+
+[[instructions]]
+name = "get_return_address"
+
+[[instructions]]
+name = "func_addr"
+
+[[instructions]]
+name = "x86_blendv"
+
+
+[[instructions]]
+name = "isplit"
+
+[[instructions]]
+name = "get_pinned_reg"
+
+[[instructions]]
+name = "fence"
+
+[[instructions]]
+name = "symbol_value"
+
+
+[[instructions]]
+name = "debugtrap"
+
+
+[[instructions]]
+name = "jump"
+
+
+[[instructions]]
+name = "dynamic_stack_store"
+
+
+
+[[instructions]]
+name = "set_pinned_reg"
+
+
+[[instructions]]
+name = "iadd_cin"
+
+
+[[instructions]]
+name = "tls_value"
+
+
+[[instructions]]
+name = "dynamic_stack_addr"
+
+
+[[instructions]]
+name = "iadd_carry"
+
+[[instructions]]
+name = "nop"
+
+
+[[instructions]]
+name = "trap"
+
+[[instructions]]
+name = "return"
+
+[[instructions]]
+name = "dynamic_stack_load"
+
+[[instructions]]
+name = "stack_switch"
+
+[[instructions]]
+name = "global_value"
+
+[[instructions]]
+name = "vconst"
+
+
+[[instructions]]
+name = "x86_pshufb"
+
+
+[[instructions]]
+name = "x86_pmaddubsw"
+
+[[instructions]]
+name = "x86_cvtt2dq"

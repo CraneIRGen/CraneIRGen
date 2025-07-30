@@ -1,5 +1,5 @@
 [package]
-name = "cranelift_fuzz"
+name = "CraneIRGen"
 version = "0.1.0"
 edition = "2021"
 
@@ -14,7 +14,6 @@ serde = { version = "1.0.207", features = ["derive"] }
 serde_json = "1.0.124"
 cranelift-codegen = {path="wasmtime/cranelift/codegen", features = ["enable-serde"] }
 cranelift-native = {path = "wasmtime/cranelift/native"}
-cranelift-tools = {path = "wasmtime/cranelift"}
 cf-constructor = {path = "crates/cf-constructor"}
 cg-constructor = {path = "crates/cg-constructor"}
 function-generator = {path = "crates/function-generator", features = ["default"]}
@@ -27,8 +26,7 @@ bytemuck = "1.23.1"
 toml = "0.9.2"
 
 [features]
-default = ["riscv"] 
-
+default = ["riscv"]  
 
 x86-64 = []
 aarch64 = []

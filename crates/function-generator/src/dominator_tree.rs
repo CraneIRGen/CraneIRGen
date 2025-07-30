@@ -47,10 +47,7 @@ fn reverse_postorder(
 
 pub fn compute_dominators(func: &Function) -> HashMap<Block, HashSet<Block>> {
     let cfg = ControlFlowGraph::with_function(func);
-    let start_node = func
-        .layout
-        .entry_block()
-        .expect("The entry node does not exist");
+    let start_node = func.layout.entry_block().expect("入口节点不存在");
 
     let mut dominators: HashMap<Block, HashSet<Block>> = HashMap::new();
     let mut nodes: HashSet<Block> = HashSet::new();
@@ -99,9 +96,6 @@ pub fn compute_dominators(func: &Function) -> HashMap<Block, HashSet<Block>> {
                 changed = true;
             }
         }
-    }
-    for (key, value) in &dominators {
-        println!("Block: {:?}, Mapped Blocks: {:?}", key, value);
     }
 
     dominators

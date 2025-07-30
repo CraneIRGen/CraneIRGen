@@ -9,6 +9,7 @@ use crate::instruction_selector::{
 use bytemuck::{bytes_of, cast_ref};
 use cg_constructor::{generate_random_signature, FunctionNode};
 use commons::fixed_rng::gen_and_print_range;
+use commons::types::ArchConfig;
 use cranelift_codegen::cursor::{Cursor, CursorPosition, FuncCursor};
 use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::flowgraph::{BlockPredecessor, ControlFlowGraph};
@@ -92,116 +93,17 @@ pub fn function_generator(
     func: &mut Function,
     is_root_func: bool,
     all_documents: &Vec<Document>,
+    config: &ArchConfig,
 ) -> (
     HashMap<Block, HashSet<Block>>,
     HashMap<Block, HashSet<TypedValue>>,
 ) {
-    fn get_random_instr_snippet(collection: &Collection<Document>) -> Vec<InstructionData> {
-        let mut instr_snippet: Vec<InstructionData> = vec![];
-
-        loop {
-            let pipeline = vec![doc! { "$sample": { "size": 1 } }];
-            let mut cursor = collection.aggregate(pipeline).run().unwrap();
-
-            if let Some(result) = cursor.next() {
-                match result {
-                    Ok(document) => {
-                        let block: BlockJson = from_bson(Bson::Document(document.clone())).unwrap();
-                        if block.instrs.len() <= 200 {
-                            for instr in block.instrs {
-                                let instr_data: InstructionData =
-                                    serde_json::from_str(&instr.to_string()).unwrap();
-                                instr_snippet.push(instr_data);
-                                println!("Deserialized instr data are: {:?}\n", instr_data);
-                            }
-
-                            break;
-                        } else {
-                            continue;
-                        }
-                    }
-                    Err(e) => panic!("Error getting document: {:?}\n", e),
-                }
-            }
-        }
-
-        instr_snippet
-    }
-
-    fn get_instr_snippet_200_list(collection: &Collection<Document>) -> Vec<Vec<InstructionData>> {
-        let mut find_result = collection.find(Document::new());
-        let mut cursor = find_result.run().unwrap();
-        let mut instr_snippet_list: Vec<Vec<InstructionData>> = vec![];
-
-        while let Some(result) = cursor.next() {
-            match result {
-                Ok(document) => {
-                    if let Some(instrs) = document.get_array("instrs").ok() {
-                        if instrs.len() <= 200 {
-                            let mut instr_snippet = vec![];
-                            for instr in instrs {
-                                match serde_json::from_str(&instr.to_string()) {
-                                    Ok(instr_data) => instr_snippet.push(instr_data),
-                                    Err(e) => {
-                                        println!("Error serde json: {:?}\n", e);
-                                        continue;
-                                    }
-                                }
-                            }
-                            instr_snippet_list.push(instr_snippet);
-                        }
-                    }
-                }
-                Err(e) => panic!("Error getting document: {:?}\n", e),
-            }
-        }
-
-        instr_snippet_list
-    }
-
-    fn get_instr_snippet_10_list(collection: &Collection<Document>) -> Vec<Vec<InstructionData>> {
-        let filter = doc! {
-            "$expr": {
-                "$lt": [{ "$size": "$instrs" }, 10]
-            }
-        };
-
-        let mut find_result = collection.find(filter);
-        let mut cursor = find_result.run().unwrap();
-        let mut instr_snippet_list: Vec<Vec<InstructionData>> = vec![];
-
-        while let Some(result) = cursor.next() {
-            match result {
-                Ok(document) => {
-                    if let Some(instrs) = document.get_array("instrs").ok() {
-                        let mut instr_snippet = vec![];
-                        for instr in instrs {
-                            match serde_json::from_str(&instr.to_string()) {
-                                Ok(instr_data) => instr_snippet.push(instr_data),
-                                Err(e) => {
-                                    println!("Error serde json: {:?}\n", e);
-                                    continue;
-                                }
-                            }
-                        }
-                        instr_snippet_list.push(instr_snippet);
-                    }
-                }
-                Err(e) => panic!("Error getting document: {:?}\n", e),
-            }
-        }
-
-        instr_snippet_list
-    }
-
-    fn get_instr_snippet_10_list_from_documents(
-        all_documents: &Vec<Document>,
-    ) -> Vec<Vec<InstructionData>> {
+    fn get_instr_snippet(all_documents: &Vec<Document>, num: usize) -> Vec<Vec<InstructionData>> {
         let mut instr_snippet_list: Vec<Vec<InstructionData>> = vec![];
 
         for document in all_documents {
             if let Some(instrs) = document.get_array("instrs").ok() {
-                if instrs.len() < 10 {
+                if instrs.len() < num {
                     let mut instr_snippet = vec![];
                     for instr in instrs {
                         match serde_json::from_str(&instr.to_string()) {
@@ -222,7 +124,7 @@ pub fn function_generator(
 
     let mut sig = func.signature.clone();
 
-    let instr_snippet_list = get_instr_snippet_10_list_from_documents(all_documents);
+    let instr_snippet_list = get_instr_snippet(all_documents, 10);
 
     let mut func_cursor = FuncCursor::new(func);
     let entry_block = func_cursor.layout().entry_block().unwrap();
@@ -273,554 +175,98 @@ pub fn function_generator(
                 0,
             ));
 
-            #[cfg(feature = "x86-64")]
-            {
-                let random_u16: u16 = rng.random();
-                let random_i64: i64 = rng.random();
-                let random_f32: f32 = rng.random();
-                let random_f64: f64 = rng.random();
+            let operand_types = &config.operand_types;
 
-                let i8_value = func_cursor.ins().iconst(I8, random_i64);
-                let i16_value = func_cursor.ins().iconst(I16, random_i64);
-                let i32_value = func_cursor.ins().iconst(I32, random_i64);
-                let i64_value = func_cursor.ins().iconst(I64, random_i64);
-                let i128_value = func_cursor.ins().uextend(I128, i64_value);
+            operand_types.iter().for_each(|operand_type| {
+                let value_type = operand_type.to_cranelift_type();
 
-                let f16_value = func_cursor
-                    .ins()
-                    .f16const(ir::immediates::Ieee16::with_bits(random_u16));
-                let f32_value = func_cursor.ins().f32const(random_f32);
-                let f64_value = func_cursor.ins().f64const(random_f64);
+                let random_value = match value_type {
+                    I8 => func_cursor.ins().iconst(value_type, rng.gen::<i64>()),
+                    I16 => func_cursor.ins().iconst(value_type, rng.gen::<i64>()),
+                    I32 => func_cursor.ins().iconst(value_type, rng.gen::<i64>()),
+                    I64 => func_cursor.ins().iconst(value_type, rng.gen::<i64>()),
+                    I128 => {
+                        let random_i64_value =
+                            func_cursor.ins().iconst(value_type, rng.gen::<i64>());
+                        func_cursor.ins().uextend(I128, random_i64_value)
+                    }
+                    F16 => func_cursor
+                        .ins()
+                        .f16const(ir::immediates::Ieee16::with_bits(rng.random())),
+                    F32 => {
+                        let random_f32: f32 = rng.random();
+                        func_cursor.ins().f32const(random_f32)
+                    }
+                    F64 => {
+                        let random_f64: f64 = rng.random();
+                        func_cursor.ins().f64const(random_f64)
+                    }
+                    I8X16 | I16X8 | I32X4 | I64X2 => {
+                        let byte_slice: Vec<u8> = (0..16).map(|_| rng.gen()).collect();
+                        let constant = func_cursor
+                            .func
+                            .dfg
+                            .constants
+                            .insert(ConstantData::from(byte_slice));
+                        func_cursor.ins().vconst(value_type, constant)
+                    }
+                    F16X8 => {
+                        let byte_slice: Vec<u8> = (0..16).map(|_| rng.gen()).collect();
+                        let constant = func_cursor
+                            .func
+                            .dfg
+                            .constants
+                            .insert(ConstantData::from(byte_slice));
+                        func_cursor.ins().vconst(F16X8, constant)
+                    }
+                    F32X4 => {
+                        let val: f32 = rng.random();
+                        let vec = f32x4::new([val; 4]);
+                        let raw_bytes = cast_ref::<f32x4, [u8; 16]>(&vec);
+                        let constant = func_cursor
+                            .func
+                            .dfg
+                            .constants
+                            .insert(ConstantData::from(raw_bytes.to_vec()));
+                        func_cursor.ins().vconst(F32X4, constant)
+                    }
+                    F64X2 => {
+                        let val: f64 = rng.random();
+                        let vec = f64x2::new([val; 2]);
+                        let raw_bytes = cast_ref::<f64x2, [u8; 16]>(&vec);
+                        let constant = func_cursor
+                            .func
+                            .dfg
+                            .constants
+                            .insert(ConstantData::from(raw_bytes.to_vec()));
+                        func_cursor.ins().vconst(F64X2, constant)
+                    }
+                    _ => panic!("Unsupported operand type"),
+                };
+                def_values.insert(TypedValue::new(random_value, value_type));
+            });
 
-                let byte_slice: Vec<u8> = (0..16).map(|_| rng.gen()).collect();
-                let v128_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(byte_slice));
+            let ss0_addr = func_cursor
+                .ins()
+                .stack_addr(ir::types::I64, ss0, Offset32::new(0));
+            let ss1_addr = func_cursor
+                .ins()
+                .stack_addr(ir::types::I64, ss1, Offset32::new(0));
+            let mut mem_flag_little = ir::MemFlags::new();
+            mem_flag_little.set_endianness(Endianness::Little);
 
-                let random_i8 = rng.random::<i8>();
-                let random_i16 = rng.random::<i16>();
-                let random_i32 = rng.random::<i32>();
-                let random_i64 = rng.random::<i64>();
-
-                let i8x16number = i8x16::new([random_i8; 16]);
-                let i16x8number = i16x8::new([random_i16; 8]);
-                let i32x4number = i32x4::new([random_i32; 4]);
-                let i64x2number = i64x2::new([random_i64; 2]);
-                let f32x4number = f32x4::new([random_f32; 4]);
-                let f64x2number = f64x2::new([random_f64; 2]);
-
-                let i8x16_number = cast_ref::<i8x16, [u8; 16]>(&i8x16number);
-                let i16x8_number = cast_ref::<i16x8, [u8; 16]>(&i16x8number);
-                let i32x4_number = cast_ref::<i32x4, [u8; 16]>(&i32x4number);
-                let i64x2_number = cast_ref::<i64x2, [u8; 16]>(&i64x2number);
-                let f32x4_number = cast_ref::<f32x4, [u8; 16]>(&f32x4number);
-                let f64x2_number = cast_ref::<f64x2, [u8; 16]>(&f64x2number);
-
-                let i8x16_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i8x16_number.to_vec()));
-                let i16x8_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i16x8_number.to_vec()));
-                let i32x4_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i32x4_number.to_vec()));
-                let i64x2_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i64x2_number.to_vec()));
-                let f32x4_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(f32x4_number.to_vec()));
-                let f64x2_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(f64x2_number.to_vec()));
-
-                let i8x16_value = func_cursor.ins().vconst(I8X16, i8x16_constant);
-                let i16x8_value = func_cursor.ins().vconst(I16X8, i16x8_constant);
-                let i32x4_value = func_cursor.ins().vconst(I32X4, i32x4_constant);
-                let i64x2_value = func_cursor.ins().vconst(I64X2, i64x2_constant);
-
-                let f16x8_value = func_cursor.ins().vconst(F16X8, v128_constant);
-                let f32x4_value = func_cursor.ins().vconst(F32X4, f32x4_constant);
-                let f64x2_value = func_cursor.ins().vconst(F64X2, f64x2_constant);
-
-                let ss0_addr = func_cursor
-                    .ins()
-                    .stack_addr(ir::types::I64, ss0, Offset32::new(0));
-                let ss1_addr = func_cursor
-                    .ins()
-                    .stack_addr(ir::types::I64, ss1, Offset32::new(0));
-                let mut mem_flag_little = ir::MemFlags::new();
-                mem_flag_little.set_endianness(Endianness::Little);
+            let i64_value = def_values
+                .iter()
+                .find(|tv| tv.get_type() == I64)
+                .unwrap()
+                .get_value();
+            for i in 0..4 {
                 func_cursor
                     .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(0));
+                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(i * 8));
                 func_cursor
                     .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(8));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(16));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(24));
-
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(0));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(8));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(16));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(24));
-
-                def_values.insert(TypedValue::new(i8_value, I8));
-                def_values.insert(TypedValue::new(i16_value, I16));
-                def_values.insert(TypedValue::new(i32_value, I32));
-                def_values.insert(TypedValue::new(i64_value, I64));
-                def_values.insert(TypedValue::new(i128_value, I128));
-
-                def_values.insert(TypedValue::new(f16_value, F16));
-                def_values.insert(TypedValue::new(f32_value, F32));
-                def_values.insert(TypedValue::new(f64_value, F64));
-
-                def_values.insert(TypedValue::new(i8x16_value, I8X16));
-                def_values.insert(TypedValue::new(i16x8_value, I16X8));
-                def_values.insert(TypedValue::new(i32x4_value, I32X4));
-                def_values.insert(TypedValue::new(i64x2_value, I64X2));
-                def_values.insert(TypedValue::new(f16x8_value, F16X8));
-                def_values.insert(TypedValue::new(f32x4_value, F32X4));
-                def_values.insert(TypedValue::new(f64x2_value, F64X2));
-            }
-
-            #[cfg(feature = "aarch64")]
-            {
-                let random_i64: i64 = rng.random();
-                let random_u16: u16 = rng.random();
-                let random_f32: f32 = rng.random();
-                let random_f64: f64 = rng.random();
-
-                let i8_value = func_cursor.ins().iconst(I8, random_i64);
-                let i16_value = func_cursor.ins().iconst(I16, random_i64);
-                let i32_value = func_cursor.ins().iconst(I32, random_i64);
-                let i64_value = func_cursor.ins().iconst(I64, random_i64);
-                let i128_value = func_cursor.ins().uextend(I128, i64_value);
-
-                let f16_value = func_cursor
-                    .ins()
-                    .f16const(ir::immediates::Ieee16::with_bits(random_u16));
-                let f32_value = func_cursor.ins().f32const(random_f32);
-                let f64_value = func_cursor.ins().f64const(random_f64);
-
-                let random_u128: u128 = rng.gen();
-
-                let byte_slice: Vec<u8> = (0..16).map(|_| rng.gen()).collect();
-                let v128_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(byte_slice));
-
-                let random_i8 = rng.random::<i8>();
-                let random_i16 = rng.random::<i16>();
-                let random_i32 = rng.random::<i32>();
-                let random_i64 = rng.random::<i64>();
-
-                let i8x16number = i8x16::new([random_i8; 16]);
-                let i16x8number = i16x8::new([random_i16; 8]);
-                let i32x4number = i32x4::new([random_i32; 4]);
-                let i64x2number = i64x2::new([random_i64; 2]);
-                let f32x4number = f32x4::new([random_f32; 4]);
-                let f64x2number = f64x2::new([random_f64; 2]);
-
-                let i8x16_number = cast_ref::<i8x16, [u8; 16]>(&i8x16number);
-                let i16x8_number = cast_ref::<i16x8, [u8; 16]>(&i16x8number);
-                let i32x4_number = cast_ref::<i32x4, [u8; 16]>(&i32x4number);
-                let i64x2_number = cast_ref::<i64x2, [u8; 16]>(&i64x2number);
-                let f32x4_number = cast_ref::<f32x4, [u8; 16]>(&f32x4number);
-                let f64x2_number = cast_ref::<f64x2, [u8; 16]>(&f64x2number);
-
-                let i8x16_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i8x16_number.to_vec()));
-                let i16x8_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i16x8_number.to_vec()));
-                let i32x4_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i32x4_number.to_vec()));
-                let i64x2_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i64x2_number.to_vec()));
-                let f32x4_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(f32x4_number.to_vec()));
-                let f64x2_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(f64x2_number.to_vec()));
-
-                let i8x16_value = func_cursor.ins().vconst(I8X16, i8x16_constant);
-                let i16x8_value = func_cursor.ins().vconst(I16X8, i16x8_constant);
-                let i32x4_value = func_cursor.ins().vconst(I32X4, i32x4_constant);
-                let i64x2_value = func_cursor.ins().vconst(I64X2, i64x2_constant);
-
-                let f32x4_value = func_cursor.ins().vconst(F32X4, f32x4_constant);
-                let f64x2_value = func_cursor.ins().vconst(F64X2, f64x2_constant);
-
-                let ss0_addr = func_cursor
-                    .ins()
-                    .stack_addr(ir::types::I64, ss0, Offset32::new(0));
-                let ss1_addr = func_cursor
-                    .ins()
-                    .stack_addr(ir::types::I64, ss1, Offset32::new(0));
-                let mut mem_flag_little = ir::MemFlags::new();
-                mem_flag_little.set_endianness(Endianness::Little);
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(0));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(8));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(16));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(24));
-
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(0));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(8));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(16));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(24));
-
-                def_values.insert(TypedValue::new(i8_value, I8));
-                def_values.insert(TypedValue::new(i16_value, I16));
-                def_values.insert(TypedValue::new(i32_value, I32));
-                def_values.insert(TypedValue::new(i64_value, I64));
-
-                def_values.insert(TypedValue::new(f16_value, F16));
-                def_values.insert(TypedValue::new(f32_value, F32));
-                def_values.insert(TypedValue::new(f64_value, F64));
-
-                def_values.insert(TypedValue::new(i128_value, I128));
-
-                def_values.insert(TypedValue::new(i8x16_value, I8X16));
-                def_values.insert(TypedValue::new(i16x8_value, I16X8));
-                def_values.insert(TypedValue::new(i32x4_value, I32X4));
-                def_values.insert(TypedValue::new(i64x2_value, I64X2));
-
-                def_values.insert(TypedValue::new(f32x4_value, F32X4));
-                def_values.insert(TypedValue::new(f64x2_value, F64X2));
-            }
-
-            #[cfg(feature = "riscv")]
-            {
-                use bytemuck::cast_ref;
-
-                let random_i64: i64 = rng.random();
-                let random_u16: u16 = rng.random();
-                let random_f32: f32 = rng.random();
-                let random_f64: f64 = rng.random();
-
-                let i8_value = func_cursor.ins().iconst(I8, random_i64);
-                let i16_value = func_cursor.ins().iconst(I16, random_i64);
-                let i32_value = func_cursor.ins().iconst(I32, random_i64);
-                let i64_value = func_cursor.ins().iconst(I64, random_i64);
-                let i128_value = func_cursor.ins().uextend(I128, i64_value);
-
-                let f32_value = func_cursor.ins().f32const(random_f32);
-                let f64_value = func_cursor.ins().f64const(random_f64);
-
-                let random_u128: u128 = rng.gen();
-
-                let byte_slice: Vec<u8> = (0..16).map(|_| rng.gen()).collect();
-                let v128_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(byte_slice));
-
-                let random_i8 = rng.random::<i8>();
-                let random_i16 = rng.random::<i16>();
-                let random_i32 = rng.random::<i32>();
-                let random_i64 = rng.random::<i64>();
-
-                let i8x16number = i8x16::new([random_i8; 16]);
-                let i16x8number = i16x8::new([random_i16; 8]);
-                let i32x4number = i32x4::new([random_i32; 4]);
-                let i64x2number = i64x2::new([random_i64; 2]);
-                let f32x4number = f32x4::new([random_f32; 4]);
-                let f64x2number = f64x2::new([random_f64; 2]);
-
-                let i8x16_number = cast_ref::<i8x16, [u8; 16]>(&i8x16number);
-                let i16x8_number = cast_ref::<i16x8, [u8; 16]>(&i16x8number);
-                let i32x4_number = cast_ref::<i32x4, [u8; 16]>(&i32x4number);
-                let i64x2_number = cast_ref::<i64x2, [u8; 16]>(&i64x2number);
-                let f32x4_number = cast_ref::<f32x4, [u8; 16]>(&f32x4number);
-                let f64x2_number = cast_ref::<f64x2, [u8; 16]>(&f64x2number);
-
-                let i8x16_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i8x16_number.to_vec()));
-                let i16x8_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i16x8_number.to_vec()));
-                let i32x4_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i32x4_number.to_vec()));
-                let i64x2_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i64x2_number.to_vec()));
-                let f32x4_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(f32x4_number.to_vec()));
-                let f64x2_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(f64x2_number.to_vec()));
-
-                let i8x16_value = func_cursor.ins().vconst(I8X16, i8x16_constant);
-                let i16x8_value = func_cursor.ins().vconst(I16X8, i16x8_constant);
-                let i32x4_value = func_cursor.ins().vconst(I32X4, i32x4_constant);
-                let i64x2_value = func_cursor.ins().vconst(I64X2, i64x2_constant);
-
-                let f32x4_value = func_cursor.ins().vconst(F32X4, f32x4_constant);
-                let f64x2_value = func_cursor.ins().vconst(F64X2, f64x2_constant);
-
-                let ss0_addr = func_cursor
-                    .ins()
-                    .stack_addr(ir::types::I64, ss0, Offset32::new(0));
-                let ss1_addr = func_cursor
-                    .ins()
-                    .stack_addr(ir::types::I64, ss1, Offset32::new(0));
-                let mut mem_flag_little = ir::MemFlags::new();
-                mem_flag_little.set_endianness(Endianness::Little);
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(0));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(8));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(16));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(24));
-
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(0));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(8));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(16));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(24));
-
-                def_values.insert(TypedValue::new(i8_value, I8));
-                def_values.insert(TypedValue::new(i16_value, I16));
-                def_values.insert(TypedValue::new(i32_value, I32));
-                def_values.insert(TypedValue::new(i64_value, I64));
-                def_values.insert(TypedValue::new(i128_value, I128));
-
-                def_values.insert(TypedValue::new(f32_value, F32));
-                def_values.insert(TypedValue::new(f64_value, F64));
-
-                def_values.insert(TypedValue::new(i8x16_value, I8X16));
-                def_values.insert(TypedValue::new(i16x8_value, I16X8));
-                def_values.insert(TypedValue::new(i32x4_value, I32X4));
-                def_values.insert(TypedValue::new(i64x2_value, I64X2));
-
-                def_values.insert(TypedValue::new(f32x4_value, F32X4));
-                def_values.insert(TypedValue::new(f64x2_value, F64X2));
-            }
-
-            #[cfg(feature = "s390x")]
-            {
-                let random_i64: i64 = rng.random();
-                let random_u16: u16 = rng.random();
-                let random_f32: f32 = rng.random();
-                let random_f64: f64 = rng.random();
-
-                let i8_value = func_cursor.ins().iconst(I8, random_i64);
-                let i16_value = func_cursor.ins().iconst(I16, random_i64);
-                let i32_value = func_cursor.ins().iconst(I32, random_i64);
-                let i64_value = func_cursor.ins().iconst(I64, random_i64);
-                let i128_value = func_cursor.ins().uextend(I128, i64_value);
-
-                let f32_value = func_cursor.ins().f32const(random_f32);
-                let f64_value = func_cursor.ins().f64const(random_f64);
-
-                let random_u128: u128 = rng.gen();
-
-                let byte_slice: Vec<u8> = (0..16).map(|_| rng.gen()).collect();
-                let v128_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(byte_slice));
-
-                let random_i8 = rng.random::<i8>();
-                let random_i16 = rng.random::<i16>();
-                let random_i32 = rng.random::<i32>();
-                let random_i64 = rng.random::<i64>();
-
-                let i8x16number = i8x16::new([random_i8; 16]);
-                let i16x8number = i16x8::new([random_i16; 8]);
-                let i32x4number = i32x4::new([random_i32; 4]);
-                let i64x2number = i64x2::new([random_i64; 2]);
-                let f32x4number = f32x4::new([random_f32; 4]);
-                let f64x2number = f64x2::new([random_f64; 2]);
-
-                let i8x16_number = cast_ref::<i8x16, [u8; 16]>(&i8x16number);
-                let i16x8_number = cast_ref::<i16x8, [u8; 16]>(&i16x8number);
-                let i32x4_number = cast_ref::<i32x4, [u8; 16]>(&i32x4number);
-                let i64x2_number = cast_ref::<i64x2, [u8; 16]>(&i64x2number);
-                let f32x4_number = cast_ref::<f32x4, [u8; 16]>(&f32x4number);
-                let f64x2_number = cast_ref::<f64x2, [u8; 16]>(&f64x2number);
-
-                let i8x16_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i8x16_number.to_vec()));
-                let i16x8_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i16x8_number.to_vec()));
-                let i32x4_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i32x4_number.to_vec()));
-                let i64x2_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(i64x2_number.to_vec()));
-                let f32x4_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(f32x4_number.to_vec()));
-                let f64x2_constant = func_cursor
-                    .func
-                    .dfg
-                    .constants
-                    .insert(ConstantData::from(f64x2_number.to_vec()));
-
-                let i8x16_value = func_cursor.ins().vconst(I8X16, i8x16_constant);
-                let i16x8_value = func_cursor.ins().vconst(I16X8, i16x8_constant);
-                let i32x4_value = func_cursor.ins().vconst(I32X4, i32x4_constant);
-                let i64x2_value = func_cursor.ins().vconst(I64X2, i64x2_constant);
-
-                let f32x4_value = func_cursor.ins().vconst(F32X4, f32x4_constant);
-                let f64x2_value = func_cursor.ins().vconst(F64X2, f64x2_constant);
-
-                let ss0_addr = func_cursor
-                    .ins()
-                    .stack_addr(ir::types::I64, ss0, Offset32::new(0));
-                let ss1_addr = func_cursor
-                    .ins()
-                    .stack_addr(ir::types::I64, ss1, Offset32::new(0));
-                let mut mem_flag_little = ir::MemFlags::new();
-                mem_flag_little.set_endianness(Endianness::Little);
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(0));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(8));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(16));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss0_addr, Offset32::new(24));
-
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(0));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(8));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(16));
-                func_cursor
-                    .ins()
-                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(24));
-
-                def_values.insert(TypedValue::new(i8_value, I8));
-                def_values.insert(TypedValue::new(i16_value, I16));
-                def_values.insert(TypedValue::new(i32_value, I32));
-                def_values.insert(TypedValue::new(i64_value, I64));
-                def_values.insert(TypedValue::new(i128_value, I128));
-
-                def_values.insert(TypedValue::new(f32_value, F32));
-                def_values.insert(TypedValue::new(f64_value, F64));
-
-                def_values.insert(TypedValue::new(i8x16_value, I8X16));
-                def_values.insert(TypedValue::new(i16x8_value, I16X8));
-
-                def_values.insert(TypedValue::new(i32x4_value, I32X4));
-                def_values.insert(TypedValue::new(f32x4_value, F32X4));
-                def_values.insert(TypedValue::new(i64x2_value, I64X2));
-                def_values.insert(TypedValue::new(f64x2_value, F64X2));
+                    .store(mem_flag_little, i64_value, ss1_addr, Offset32::new(i * 8));
             }
 
             block_def_values.insert(entry_block, def_values.clone());
@@ -843,6 +289,7 @@ pub fn function_generator(
                 instr,
                 &dominator_blocks,
                 &block_def_values,
+                config,
             ) {
                 Some((new_value, ref_values_op)) => {
                     if let Some(values) = ref_values_op {
@@ -855,9 +302,7 @@ pub fn function_generator(
                         def_values.insert(new_value.unwrap());
                     }
                 }
-                None => {
-                    println!("no new value is defined");
-                }
+                None => {}
             }
         }
 
@@ -927,17 +372,8 @@ pub fn function_generator(
                     set.retain(|t| pre_block_def_types.contains(t));
                     Some(set.clone())
                 }
-                None => panic!("The intersection should not be None"),
+                None => panic!("intersection 这里不可能为None"),
             };
-        }
-
-        match intersection {
-            Some(ref intersected_types) if !intersected_types.is_empty() => {
-                println!("Intersection of value types: {:?}", intersected_types);
-            }
-            _ => {
-                println!("No common value types found.");
-            }
         }
 
         return intersection.map_or_else(Vec::new, |set| set.into_iter().collect());
@@ -1070,7 +506,7 @@ pub fn function_generator(
                         }
                     }
                     _ => {
-                        panic!("A block that contains a postfix, but the last instruction is not a jump instruction")
+                        panic!("某个block其含有后驱，但是最后一个指令不是跳转指令")
                     }
                 }
                 func_cursor.func.dfg.insts[last_instr_id].clone_from(&last_instr_data);
@@ -1185,8 +621,6 @@ pub fn function_generator(
         func_cursor.goto_bottom(last_block);
         func_cursor.ins().return_(return_values.as_slice());
     }
-
-    println!("last block is {:?}", last_block);
 
     return (dominator_block_set, block_def_values);
 }
@@ -1349,4 +783,20 @@ pub fn insert_function_invocation(
             }
         }
     }
+}
+
+fn init_function_context(func: &mut Function) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cranelift_codegen::entity::EntityRef;
+
+    #[test]
+    fn it_works() {
+        assert_eq!(4, 4);
+    }
+
+    #[test]
+    fn test_deserialized_instr_data() {}
 }

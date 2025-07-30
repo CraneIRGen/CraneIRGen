@@ -41,9 +41,8 @@ pub fn gen_and_print_range(start: u32, end: u32, is_instrs: bool) -> u32 {
             random_number = rand::thread_rng().gen_range(start..end);
         }
 
-        println!("generated random number: {}", random_number);
         random_number
     } else {
-        panic!("RNG not initialized");
+        panic!("The RNG has not been initialized");
     }
 }
